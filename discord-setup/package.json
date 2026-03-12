@@ -1,0 +1,16 @@
+{
+  "name": "blue42-discord-setup",
+  "version": "1.0.0",
+  "description": "Automated Discord server setup for Blue42",
+  "main": "setup-server.js",
+  "scripts": {
+    "setup": "node setup-server.js"
+  },
+  "keywords": ["discord", "automation", "setup"],
+  "author": "Blue42",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1"
+  }
+}
