@@ -4,7 +4,10 @@
   "description": "Automated Discord server setup for Blue42",
   "main": "setup-server.js",
   "scripts": {
-    "setup": "node setup-server.js"
+    "setup": "node setup-server.js",
+    "update": "node update-channels.js",
+    "update-channels": "node update-channels.js",
+    "post-messages": "node post-messages.js"
   },
   "keywords": ["discord", "automation", "setup"],
   "author": "Blue42",
