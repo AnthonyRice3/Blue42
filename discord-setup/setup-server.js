@@ -1,11 +1,19 @@
 const { Client, GatewayIntentBits, PermissionFlagsBits, ChannelType } = require('discord.js');
 const fs = require('fs');
+require('dotenv').config();
 
 // Load configuration
 const config = JSON.parse(fs.readFileSync('./setup-config.json', 'utf8'));
 
-if (config.botToken === 'YOUR_BOT_TOKEN_HERE' || config.serverId === 'YOUR_SERVER_ID_HERE') {
-  console.error('❌ Error: Please update setup-config.json with your bot token and server ID');
+const BOT_TOKEN = process.env.BOT_TOKEN || config.botToken;
+const SERVER_ID = process.env.DISCORD_SERVER_ID || config.serverId;
+
+if (!BOT_TOKEN) {
+  console.error('❌ Error: BOT_TOKEN not set. Add it to the .env file.');
+  process.exit(1);
+}
+if (!SERVER_ID) {
+  console.error('❌ Error: DISCORD_SERVER_ID not set in .env and serverId missing from setup-config.json.');
   process.exit(1);
 }
 
@@ -275,4 +283,4 @@ client.once('ready', () => {
   setupServer();
 });
 
-client.login(config.botToken);
+client.login(BOT_TOKEN);

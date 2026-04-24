@@ -1,8 +1,17 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
+require('dotenv').config();
 
 // Load configuration
 const config = JSON.parse(fs.readFileSync('./setup-config.json', 'utf8'));
+
+const BOT_TOKEN = process.env.BOT_TOKEN || config.botToken;
+const SERVER_ID = process.env.DISCORD_SERVER_ID || config.serverId;
+
+if (!BOT_TOKEN) {
+  console.error('❌ Error: BOT_TOKEN not set. Add it to the .env file.');
+  process.exit(1);
+}
 
 const client = new Client({
   intents: [
@@ -258,4 +267,4 @@ client.once('ready', () => {
   postMessages();
 });
 
-client.login(config.botToken);
+client.login(BOT_TOKEN);

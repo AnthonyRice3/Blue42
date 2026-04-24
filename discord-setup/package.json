@@ -7,7 +7,11 @@
     "setup": "node setup-server.js",
     "update": "node update-channels.js",
     "update-channels": "node update-channels.js",
-    "post-messages": "node post-messages.js"
+    "post-messages": "node post-messages.js",
+    "post-drops": "node post-drop-alerts.js",
+    "announce-drops": "node announce-drops-feature.js",
+    "relay": "node relay-rattle-pokemon.js",
+    "scrape": "node scrape-drop-alerts.js"
   },
   "keywords": ["discord", "automation", "setup"],
   "author": "Blue42",
