@@ -589,10 +589,12 @@ discord.once('ready', async () => {
   }
 
   // Start all pollers
-  startPolling('Reddit',    pollReddit,    INTERVALS.reddit);
-  startPolling('PokeBeach', pollPokeBeach, INTERVALS.pokebeach);
+  // NOTE: Reddit, PokeBeach, and Walmart block Railway datacenter IPs
+  // Only Target works reliably without proxies
+  // startPolling('Reddit',    pollReddit,    INTERVALS.reddit);
+  // startPolling('PokeBeach', pollPokeBeach, INTERVALS.pokebeach);
   startPolling('Target',    pollTarget,    INTERVALS.target);
-  startPolling('Walmart',   pollWalmart,   INTERVALS.walmart);
+  // startPolling('Walmart',   pollWalmart,   INTERVALS.walmart);
 
   console.log('\n🔍 Scraper running. Press Ctrl+C to stop.\n');
 });
