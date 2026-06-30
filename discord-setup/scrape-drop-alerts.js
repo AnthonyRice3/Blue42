@@ -29,8 +29,69 @@
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const mongoose = require('mongoose');
 const fs   = require('fs');
 const path = require('path');
+
+// ── MongoDB Setup ─────────────────────────────────────────────────────────────
+
+const MONGODB_URI = process.env.MONGODB_URI;
+
+if (!MONGODB_URI) {
+  console.warn('⚠️  MONGODB_URI not set — alerts will only post to Discord, not saved to database');
+}
+
+// Alert Schema (matches client/src/lib/db/models/Alert.ts)
+const AlertSchema = new mongoose.Schema({
+  source: {
+    type: String,
+    enum: ['reddit', 'pokebeach', 'target', 'walmart', 'manual'],
+    required: true,
+    index: true,
+  },
+  title: { type: String, required: true, trim: true },
+  description: { type: String, trim: true },
+  url: { type: String, trim: true },
+  imageUrl: { type: String, trim: true },
+  retailer: {
+    type: String,
+    enum: ['target', 'costco', 'walmart', 'sams-club', 'gamestop', 'bestbuy', 'pokemon-center', 'other'],
+    index: true,
+  },
+  productName: { type: String, trim: true },
+  price: { type: Number, min: 0 },
+  inStock: { type: Boolean, default: true, index: true },
+  author: { type: String, trim: true },
+  sourceId: { type: String, required: true, unique: true, index: true },
+  postedAt: { type: Date, required: true, index: true },
+  expiresAt: { type: Date, index: true },
+}, { timestamps: true });
+
+AlertSchema.index({ postedAt: -1, inStock: 1 });
+AlertSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+AlertSchema.pre('save', function(next) {
+  if (!this.expiresAt) {
+    this.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  }
+  next();
+});
+
+const Alert = mongoose.models.Alert || mongoose.model('Alert', AlertSchema);
+
+let mongoConnected = false;
+
+async function connectMongoDB() {
+  if (!MONGODB_URI) return;
+  try {
+    await mongoose.connect(MONGODB_URI);
+    mongoConnected = true;
+    console.log('✓ Connected to MongoDB for alert storage');
+  } catch (err) {
+    console.error('❌ MongoDB connection failed:', err.message);
+    console.error('   Alerts will only post to Discord');
+  }
+}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -119,12 +180,47 @@ async function findAlertChannel() {
   ) || null;
 }
 
-async function postAlert(embed) {
-  if (!alertChannel) return;
-  try {
-    await alertChannel.send({ embeds: [embed] });
-  } catch (err) {
-    console.error('❌ Failed to post embed:', err.message);
+async function postAlert(embed, metadata = {}) {
+  // Post to Discord
+  if (alertChannel) {
+    try {
+      await alertChannel.send({ embeds: [embed] });
+    } catch (err) {
+      console.error('❌ Failed to post embed to Discord:', err.message);
+    }
+  }
+
+  // Save to MongoDB
+  if (mongoConnected && metadata.sourceId) {
+    try {
+      const alertDoc = {
+        source: metadata.source || 'manual',
+        title: embed.data.title || 'Untitled Alert',
+        description: embed.data.description || undefined,
+        url: embed.data.url || metadata.url || undefined,
+        imageUrl: embed.data.thumbnail?.url || embed.data.image?.url || undefined,
+        retailer: metadata.retailer || undefined,
+        productName: metadata.productName || undefined,
+        price: metadata.price || undefined,
+        inStock: metadata.inStock !== undefined ? metadata.inStock : true,
+        author: embed.data.author?.name || metadata.author || undefined,
+        sourceId: metadata.sourceId,
+        postedAt: embed.data.timestamp ? new Date(embed.data.timestamp) : new Date(),
+      };
+
+      await Alert.findOneAndUpdate(
+        { sourceId: alertDoc.sourceId },
+        alertDoc,
+        { upsert: true, new: true }
+      );
+      console.log(`  💾 Saved to database: ${alertDoc.sourceId.substring(0, 40)}`);
+    } catch (err) {
+      if (err.code === 11000) {
+        // Duplicate key - already exists, ignore
+      } else {
+        console.error('❌ Failed to save alert to DB:', err.message);
+      }
+    }
   }
 }
 
@@ -200,7 +296,23 @@ async function pollReddit() {
           embed.setThumbnail(post.thumbnail);
         }
 
-        await postAlert(embed);
+        // Extract retailer from title/body
+        const lowerCombined = combined.toLowerCase();
+        let retailer = 'other';
+        if (lowerCombined.includes('target')) retailer = 'target';
+        else if (lowerCombined.includes('costco')) retailer = 'costco';
+        else if (lowerCombined.includes('walmart')) retailer = 'walmart';
+        else if (lowerCombined.includes('sam')) retailer = 'sams-club';
+        else if (lowerCombined.includes('gamestop')) retailer = 'gamestop';
+        else if (lowerCombined.includes('best buy')) retailer = 'bestbuy';
+
+        await postAlert(embed, {
+          sourceId: id,
+          source: 'reddit',
+          retailer: retailer,
+          author: post.author,
+          url: `https://reddit.com${post.permalink}`,
+        });
         await sleep(500); // small delay between posts
       }
     } catch (err) {
@@ -253,7 +365,11 @@ async function pollPokeBeach() {
         .setTimestamp(pubDate ? new Date(pubDate) : new Date())
         .setFooter({ text: 'pokebeach.com • blue42bots.com/drops' });
 
-      await postAlert(embed);
+      await postAlert(embed, {
+        sourceId: id,
+        source: 'pokebeach',
+        url: link,
+      });
       await sleep(500);
     }
   } catch (err) {
@@ -325,7 +441,18 @@ async function pollTarget() {
       const imgUrl = product.item?.enrichment?.images?.primary_image_url;
       if (imgUrl) embed.setThumbnail(imgUrl);
 
-      await postAlert(embed);
+      const price = product.children?.[0]?.price?.formatted_current_price || 
+                    product.price?.current_retail || null;
+
+      await postAlert(embed, {
+        sourceId: id,
+        source: 'target',
+        retailer: 'target',
+        productName: title,
+        price: price ? parseFloat(price.replace(/[^0-9.]/g, '')) : undefined,
+        inStock: true,
+        url: `https://www.target.com/p/-/A-${tcin}`,
+      });
       await sleep(500);
 
     } catch (err) {
@@ -387,7 +514,15 @@ async function pollWalmart() {
 
         if (item.imageUrl) embed.setThumbnail(item.imageUrl);
 
-        await postAlert(embed);
+        await postAlert(embed, {
+          sourceId: id,
+          source: 'walmart',
+          retailer: 'walmart',
+          productName: name,
+          price: price ? parseFloat(price) : undefined,
+          inStock: true,
+          url: `https://www.walmart.com/ip/${itemId}`,
+        });
         await sleep(500);
       }
       await sleep(2000);
@@ -418,17 +553,38 @@ function startPolling(label, fn, intervalMs) {
 
 discord.once('ready', async () => {
   console.log(`\n✅ Scraper bot online as ${discord.user.tag}`);
+  console.log(`📡 Server ID: ${SERVER_ID}`);
+  console.log(`📢 Alert Channel ID: ${ALERT_CHANNEL_ID || 'auto-detect'}\n`);
+
+  // Connect to MongoDB for alert storage
+  await connectMongoDB();
 
   try {
+    const guild = await discord.guilds.fetch(SERVER_ID).catch(err => {
+      console.error('❌ Failed to fetch Blue42 server:', err.message);
+      console.error('   Check DISCORD_SERVER_ID in Railway environment variables.');
+      throw err;
+    });
+    console.log(`✅ Connected to server: ${guild.name}`);
+
     alertChannel = await findAlertChannel();
     if (!alertChannel) {
       console.error('❌ Could not find #release-alerts in Blue42 server.');
-      console.error('   Set BLUE42_ALERT_CHANNEL_ID in .env to override.');
+      console.error('   Available channels:');
+      const channels = await guild.channels.fetch();
+      channels.filter(c => c.isTextBased()).forEach(c => {
+        console.error(`   - #${c.name} (ID: ${c.id})`);
+      });
+      console.error('\n   Set BLUE42_ALERT_CHANNEL_ID in Railway environment variables to override.');
       process.exit(1);
     }
     console.log(`📢 Posting to #${alertChannel.name} (${alertChannel.id})\n`);
   } catch (err) {
     console.error('❌ Startup error:', err.message);
+    console.error('\nDebug info:');
+    console.error(`  BOT_TOKEN: ${BOT_TOKEN ? 'SET (' + BOT_TOKEN.substring(0, 20) + '...)' : 'NOT SET'}`);
+    console.error(`  DISCORD_SERVER_ID: ${SERVER_ID || 'NOT SET'}`);
+    console.error(`  BLUE42_ALERT_CHANNEL_ID: ${ALERT_CHANNEL_ID || 'NOT SET'}`);
     process.exit(1);
   }
 
